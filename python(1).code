@@ -1,0 +1,239 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+from typing import List, Optional
+from dataclasses import dataclass
+import random
+
+@dataclass
+class Call:
+    id: int
+    type: int
+    arrival_time: datetime
+    wait_time: float = 0
+    satisfaction_score: Optional[float] = None
+    resolution_time: Optional[timedelta] = None
+    priority: int = 1
+
+    def update_wait_time(self, current_time: datetime):
+        self.wait_time = (current_time - self.arrival_time).total_seconds() / 60
+
+class Agent:
+    def __init__(self, id: int, skills: List[int]):
+        self.id = id
+        self.skills = skills
+        self.current_call: Optional[Call] = None
+        self.calls_handled = 0
+        self.total_handle_time = timedelta()
+        self.total_satisfaction = 0
+
+    def start_call(self, call: Call, current_time: datetime):
+        self.current_call = call
+        self.calls_handled += 1
+
+    def end_call(self, current_time: datetime):
+        if self.current_call:
+            resolution_time = timedelta(minutes=random.uniform(5, 15))
+            self.current_call.resolution_time = resolution_time
+            self.current_call.satisfaction_score = random.uniform(3.5, 5.0)
+            self.total_handle_time += resolution_time
+            self.total_satisfaction += self.current_call.satisfaction_score
+            self.current_call = None
+
+class WaitTimePredictor:
+    def predict_wait_time(self, queue_length: int, available_agents: int) -> float:
+        if available_agents > 0:
+            return max(0, queue_length * 2 / available_agents)
+        return queue_length * 2
+
+class DynamicPriorityManager:
+    def update_priority(self, call: Call, current_time: datetime):
+        wait_time_minutes = (current_time - call.arrival_time).total_seconds() / 60
+        if wait_time_minutes > 10:
+            call.priority = 3
+        elif wait_time_minutes > 5:
+            call.priority = 2
+
+class SkillBasedRouter:
+    def __init__(self, agents: List[Agent]):
+        self.agents = agents
+
+    def find_best_agent(self, call: Call) -> Optional[Agent]:
+        available_agents = [agent for agent in self.agents
+                          if agent.current_call is None and call.type in agent.skills]
+        return random.choice(available_agents) if available_agents else None
+
+class EnhancedCallCenter:
+    def __init__(self, num_agents: int, num_call_types: int):
+        self.num_agents = num_agents
+        self.num_call_types = num_call_types
+        self.agents = [
+            Agent(i, skills=random.sample(range(num_call_types), k=random.randint(2, num_call_types)))
+            for i in range(num_agents)
+        ]
+        self.call_queue: List[Call] = []
+        self.completed_calls: List[Call] = []
+        self.wait_time_predictor = WaitTimePredictor()
+        self.priority_manager = DynamicPriorityManager()
+        self.skill_router = SkillBasedRouter(self.agents)
+        self.current_time = datetime.now()
+        self.call_id_counter = 0
+
+    def generate_new_calls(self) -> List[Call]:
+        num_new_calls = random.randint(0, 2)  # Random number of new calls per minute
+        new_calls = []
+        for _ in range(num_new_calls):
+            self.call_id_counter += 1
+            new_call = Call(
+                id=self.call_id_counter,
+                type=random.randint(0, self.num_call_types - 1),
+                arrival_time=self.current_time,
+            )
+            new_calls.append(new_call)
+        return new_calls
+
+    def step(self):
+        self.current_time += timedelta(minutes=1)
+
+         # End completed calls
+        for agent in self.agents:
+            if agent.current_call and random.random() < 0.2:  # 20% chance to end call each minute
+                # Store a temporary reference to the completed call
+                completed_call = agent.current_call
+                agent.end_call(self.current_time)
+                # Append the temporary reference to completed_calls
+                self.completed_calls.append(completed_call)
+
+        # Generate and add new calls
+        new_calls = self.generate_new_calls()
+        self.call_queue.extend(new_calls)
+
+        # Update priorities
+        for call in self.call_queue:
+            self.priority_manager.update_priority(call, self.current_time)
+            call.update_wait_time(self.current_time)
+
+        # Sort queue by priority and wait time
+        self.call_queue.sort(key=lambda x: (-x.priority, x.wait_time), reverse=True)
+
+        # Route calls to available agents
+        for call in self.call_queue[:]:
+            agent = self.skill_router.find_best_agent(call)
+            if agent:
+                agent.start_call(call, self.current_time)
+                self.call_queue.remove(call)
+
+        # Calculate metrics
+        available_agents = sum(1 for agent in self.agents if agent.current_call is None)
+        # The following line had an indentation error. It's now corrected.
+        avg_wait_time = np.mean([c.wait_time for c in self.completed_calls]) if self.completed_calls else 0
+        avg_satisfaction = np.mean([c.satisfaction_score for c in self.completed_calls if c.satisfaction_score]) if self.completed_calls else 0
+
+        state = {
+            'queue_length': len(self.call_queue),
+            'active_calls': sum(1 for agent in self.agents if agent.current_call is not None),
+            'metrics': {
+                'avg_wait_time': avg_wait_time,
+                'avg_satisfaction': avg_satisfaction
+            }
+        }
+        return state
+
+    def generate_report(self):
+        data = []
+        for agent in self.agents:
+            avg_handle_time = (agent.total_handle_time.total_seconds() / 60) / max(1, agent.calls_handled)
+            avg_satisfaction = agent.total_satisfaction / max(1, agent.calls_handled)
+            data.append({
+                'Agent ID': agent.id,
+                'Calls Handled': agent.calls_handled,
+                'Avg Handle Time (min)': avg_handle_time,
+                'Avg Satisfaction': avg_satisfaction,
+                'Skills': len(agent.skills)
+            })
+        return pd.DataFrame(data)
+
+def run_call_center_demo():
+    """Demo function to show call center simulation results"""
+    print("Starting Call Center Simulation...")
+    print("Running 8-hour shift simulation (480 minutes)")
+
+    # Initialize simulation
+    call_center = EnhancedCallCenter(num_agents=10, num_call_types=5)
+
+    # Track metrics over time
+    time_metrics = {
+        'queue_length': [],
+        'active_calls': [],
+        'avg_wait_time': [],
+        'avg_satisfaction': []
+    }
+
+    # Run simulation
+    for minute in range(480):
+        if minute % 60 == 0:
+            print(f"\nHour {minute // 60 + 1} started...")
+
+        state = call_center.step()
+
+        # Track metrics
+        time_metrics['queue_length'].append(state['queue_length'])
+        time_metrics['active_calls'].append(state['active_calls'])
+        time_metrics['avg_wait_time'].append(state['metrics']['avg_wait_time'])
+        time_metrics['avg_satisfaction'].append(state['metrics']['avg_satisfaction'])
+
+    # Generate final report
+    print("\n=== FINAL SIMULATION RESULTS ===")
+    print(f"Total Calls Handled: {len(call_center.completed_calls)}")
+    print(f"Final Queue Length: {len(call_center.call_queue)}")
+
+    if call_center.completed_calls:
+        avg_wait = np.mean([c.wait_time for c in call_center.completed_calls])
+        avg_satisfaction = np.mean([c.satisfaction_score for c in call_center.completed_calls if c.satisfaction_score is not None])
+        avg_resolution = np.mean([c.resolution_time.total_seconds()/60 for c in call_center.completed_calls if c.resolution_time is not None])
+
+        print(f"\nKey Performance Metrics:")
+        print(f"Average Wait Time: {avg_wait:.2f} minutes")
+        print(f"Average Satisfaction Score: {avg_satisfaction:.2f}")
+        print(f"Average Resolution Time: {avg_resolution:.2f} minutes")
+
+    # Generate agent performance report
+    agent_report = call_center.generate_report()
+    print("\n=== AGENT PERFORMANCE REPORT ===")
+    print(agent_report.round(2))
+
+    # Plot metrics
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+
+    # Queue Length over time
+    ax1.plot(time_metrics['queue_length'])
+    ax1.set_title('Queue Length Over Time')
+    ax1.set_xlabel('Minutes')
+    ax1.set_ylabel('Number of Calls')
+
+    # Active Calls over time
+    ax2.plot(time_metrics['active_calls'])
+    ax2.set_title('Active Calls Over Time')
+    ax2.set_xlabel('Minutes')
+    ax2.set_ylabel('Number of Calls')
+
+    # Average Wait Time trend
+    ax3.plot(time_metrics['avg_wait_time'])
+    ax3.set_title('Average Wait Time Trend')
+    ax3.set_xlabel('Minutes')
+    ax3.set_ylabel('Minutes')
+
+    # Average Satisfaction trend
+    ax4.plot(time_metrics['avg_satisfaction'])
+    ax4.set_title('Average Satisfaction Trend')
+    ax4.set_xlabel('Minutes')
+    ax4.set_ylabel('Satisfaction Score')
+
+    plt.tight_layout()
+    plt.show()
+
+    return call_center
+
+if __name__ == "__main__":
+    call_center = run_call_center_demo()
